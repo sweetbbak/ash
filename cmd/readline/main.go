@@ -70,12 +70,14 @@ func (a *ash) highlighter(line []rune) string {
 
 	for i, word := range words {
 		word = strings.TrimSpace(word)
+		words[i] = fmt.Sprintf("%s%s%s", UL, word, CLEAR)
 
 		matches, _ := filepath.Glob(word + "*")
 		for _, m := range matches {
 			_, err := os.Stat(m)
 			if err == nil {
 				words[i] = fmt.Sprintf("%s%s%s", UL, word, CLEAR)
+				break
 			}
 		}
 
@@ -192,21 +194,26 @@ func (a *ash) Run() error {
 
 		log.Println("parsing:", line)
 
-		var exitErr error
+		var (
+			exitErr    error
+			shouldExit bool
+		)
 		if err := a.parser.Stmts(strings.NewReader(line), func(stmt *syntax.Stmt) bool {
 			exitErr = a.runner.Run(ctx, stmt)
 			if a.runner.Exited() {
-				return false
+				shouldExit = true
 			}
 
-			return true
+			return false
 		}); err != nil {
 			log.Println(err)
 		}
 
-		if e, ok := interp.IsExitStatus(exitErr); ok {
+		if e, ok := interp.IsExitStatus(exitErr); ok && shouldExit {
 			os.Exit(int(e))
 		}
+
+		shouldExit = false
 
 	}
 
