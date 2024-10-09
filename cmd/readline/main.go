@@ -168,14 +168,15 @@ func (a *ash) Run() error {
 
 	init, err := a.parser.Parse(f, "init")
 
+	// signals := make(chan os.Signal, 1)
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt)
+	signal.Notify(signals, os.Interrupt, os.Kill)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, _ := context.WithCancel(context.Background())
 	go func() {
 		select {
 		case <-signals:
-			cancel()
+			// cancel()
 			return
 		case <-ctx.Done():
 			return
@@ -187,9 +188,9 @@ func (a *ash) Run() error {
 	for {
 		line, err := a.shell.Readline()
 		if err == io.EOF {
-			break
+			// break
 		} else if err != nil {
-			return err
+			// return err
 		}
 
 		log.Println("parsing:", line)
@@ -198,6 +199,7 @@ func (a *ash) Run() error {
 			exitErr    error
 			shouldExit bool
 		)
+
 		if err := a.parser.Stmts(strings.NewReader(line), func(stmt *syntax.Stmt) bool {
 			exitErr = a.runner.Run(ctx, stmt)
 			if a.runner.Exited() {
@@ -212,9 +214,6 @@ func (a *ash) Run() error {
 		if e, ok := interp.IsExitStatus(exitErr); ok && shouldExit {
 			os.Exit(int(e))
 		}
-
-		shouldExit = false
-
 	}
 
 	return nil
