@@ -21,10 +21,14 @@ import (
 )
 
 type ash struct {
-	highlight func(line []rune) string
-	multiLine func(line []rune) (accept bool)
-	shell     *readline.Shell
-	exes      []string
+	highlight   func(line []rune) string
+	multiLine   func(line []rune) (accept bool)
+	shell       *readline.Shell
+	parser      *syntax.Parser
+	runner      *interp.Runner
+	Stmts       *syntax.Stmt
+	Executables []string
+	PathDirs    []string
 }
 
 func acceptMultiline(line []rune) (accept bool) {
@@ -59,19 +63,21 @@ func (a *ash) highlighter(line []rune) string {
 		return string(line)
 	}
 
-	// hiline := highlighter.String()
-	// words := strings.Split(hiline, " ")
-	words := strings.Split(string(line), " ")
+	hiline := highlighter.String()
+	words := strings.Split(hiline, " ")
+	// words := strings.Split(string(line), " ")
+	log.Printf("line [%s]", words)
 
 	for i, word := range words {
+		word = strings.TrimSpace(word)
+
 		_, err := os.Stat(word)
 		if err == nil {
 			words[i] = fmt.Sprintf("%s%s%s", UL, word, CLEAR)
 		}
 
-		for _, e := range a.exes {
+		for _, e := range a.Executables {
 			e = strings.TrimSpace(e)
-			word = strings.TrimSpace(word)
 			if e == word {
 				words[i] = fmt.Sprintf("\x1b[0m%s%s%s", GREEN, word, CLEAR)
 			}
@@ -120,11 +126,10 @@ func (a *ash) Run() error {
 	config.Set("keyseq-timeout", 100)
 
 	// Or create and bind it in one call.
-	a.shell.History.AddFromFile("history name", "ash_history")
+	a.shell.History.AddFromFile("history name", ".ash_history")
 	a.shell.SyntaxHighlighter = a.highlighter
 	a.shell.AcceptMultiline = a.multiLine
 
-	// a.shell.Prompt.Primary(func() string { return "$ " })
 	a.shell.Prompt.Primary(a.Prompt)
 	a.shell.Prompt.Right(func() string {
 		now := time.Now()
@@ -134,12 +139,15 @@ func (a *ash) Run() error {
 		return fmt.Sprintf("%v:%v", h, m)
 	})
 
-	r, err := interp.New(interp.StdIO(os.Stdin, os.Stdout, os.Stderr))
+	runner, err := interp.New(interp.StdIO(os.Stdin, os.Stdout, os.Stderr), interp.Interactive(true))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
+
+	a.parser = parser
+	a.runner = runner
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt)
@@ -155,26 +163,6 @@ func (a *ash) Run() error {
 		}
 	}()
 
-	// fmt.Fprintf(os.Stdout, "$ ")
-	// parser.Interactive(os.Stdin, func(stmts []*syntax.Stmt) bool {
-	// 	if parser.Incomplete() {
-	// 		fmt.Fprintf(os.Stdout, "> ")
-	// 		return true
-	// 	}
-	//
-	// 	ctx := context.Background()
-	// 	for _, stmt := range stmts {
-	// 		err = r.Run(ctx, stmt)
-	// 		if r.Exited() {
-	// 			return false
-	// 		}
-	// 	}
-	//
-	// 	fmt.Fprintf(os.Stdout, "$ ")
-	// 	return true
-	// },
-	// )
-
 	for {
 		line, err := a.shell.Readline()
 		if err == io.EOF {
@@ -183,41 +171,40 @@ func (a *ash) Run() error {
 			return err
 		}
 
-		// sfile, _ := parser.Parse(strings.NewReader(line), "ash")
-		// r.Run(context.Background(), sfile)
+		log.Println("parsing:", line)
 
-		// var words []*syntax.Word
-		// parser.Words(strings.NewReader(line), func(w *syntax.Word) bool {
-		// 	words = append(words, w)
-		// 	return true
-		// })
-
-		if err := parser.Stmts(strings.NewReader(line), func(stmt *syntax.Stmt) bool {
-			if parser.Incomplete() {
-				return true
-			}
-
-			r.Run(ctx, stmt)
-			if r.Exited() {
+		var exitErr error
+		if err := a.parser.Stmts(strings.NewReader(line), func(stmt *syntax.Stmt) bool {
+			exitErr = a.runner.Run(ctx, stmt)
+			if a.runner.Exited() {
 				return false
 			}
 
-			return false
+			return true
 		}); err != nil {
 			log.Println(err)
 		}
+
+		if e, ok := interp.IsExitStatus(exitErr); ok {
+			os.Exit(int(e))
+		}
+
 	}
 
 	return nil
 }
 
 func main() {
+	logfile, _ := os.Create("ash.log")
+	defer logfile.Close()
+
+	log.SetOutput(logfile)
+
 	_, exes := lookPath()
 	a := ash{
-		multiLine: acceptMultiline,
-		// highlight: highlighter,
-		shell: readline.NewShell(inputrc.WithName("ash")),
-		exes:  exes,
+		multiLine:   acceptMultiline,
+		shell:       readline.NewShell(inputrc.WithName("ash")),
+		Executables: exes,
 	}
 
 	if err := a.Run(); err != nil {
