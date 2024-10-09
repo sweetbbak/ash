@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -66,15 +67,22 @@ func (a *ash) highlighter(line []rune) string {
 	hiline := highlighter.String()
 	words := strings.Split(hiline, " ")
 	// words := strings.Split(string(line), " ")
-	log.Printf("line [%s]", words)
 
 	for i, word := range words {
 		word = strings.TrimSpace(word)
 
-		_, err := os.Stat(word)
-		if err == nil {
-			words[i] = fmt.Sprintf("%s%s%s", UL, word, CLEAR)
+		matches, _ := filepath.Glob(word + "*")
+		for _, m := range matches {
+			_, err := os.Stat(m)
+			if err == nil {
+				words[i] = fmt.Sprintf("%s%s%s", UL, word, CLEAR)
+			}
 		}
+
+		// _, err := os.Stat(word)
+		// if err == nil {
+		// 	words[i] = fmt.Sprintf("%s%s%s", UL, word, CLEAR)
+		// }
 
 		for _, e := range a.Executables {
 			e = strings.TrimSpace(e)
@@ -149,6 +157,15 @@ func (a *ash) Run() error {
 	a.parser = parser
 	a.runner = runner
 
+	// example of sourcing shell init files
+	f, err := os.Open("shinit")
+	if err != nil {
+		log.Println(err)
+	}
+	defer f.Close()
+
+	init, err := a.parser.Parse(f, "init")
+
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt)
 
@@ -162,6 +179,8 @@ func (a *ash) Run() error {
 			return
 		}
 	}()
+
+	a.runner.Run(ctx, init)
 
 	for {
 		line, err := a.shell.Readline()
