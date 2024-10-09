@@ -1,4 +1,4 @@
-module ash
+module github.com/sweetbbak/ash
 
 go 1.23.1
 
