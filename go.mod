@@ -27,5 +27,3 @@ require (
 	golang.org/x/exp v0.0.0-20220827204233-334a2380cb91 // indirect
 	golang.org/x/tools v0.21.0 // indirect
 )
-
-replace mdvan.cc/sh/v3 => /home/sweet/dev/readline/pkg/sh
