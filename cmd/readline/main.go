@@ -59,9 +59,14 @@ func acceptMultiline(line []rune) (accept bool) {
 func (a *ash) highlighter(line []rune) string {
 	var highlighter strings.Builder
 
-	err := quick.Highlight(&highlighter, string(line), "bash", "terminal16m", "witchhazel")
+	err := quick.Highlight(&highlighter, string(line), "bash", "terminal256", "witchhazel")
 	if err != nil {
 		return string(line)
+	}
+
+	f, _ := a.parser.Parse(strings.NewReader(string(line)), "highlite")
+	for _, s := range f.Stmts {
+		s.Cmd.Pos()
 	}
 
 	hiline := highlighter.String()
@@ -70,7 +75,7 @@ func (a *ash) highlighter(line []rune) string {
 
 	for i, word := range words {
 		word = strings.TrimSpace(word)
-		words[i] = fmt.Sprintf("%s%s%s", UL, word, CLEAR)
+		// words[i] = fmt.Sprintf("%s%s%s", UL, word, CLEAR)
 
 		matches, _ := filepath.Glob(word + "*")
 		for _, m := range matches {
@@ -141,13 +146,16 @@ func (a *ash) Run() error {
 	a.shell.AcceptMultiline = a.multiLine
 
 	a.shell.Prompt.Primary(a.Prompt)
-	a.shell.Prompt.Right(func() string {
-		now := time.Now()
-		h := now.Hour()
-		m := now.Minute()
+	// a.shell.Prompt.Secondary(func() string { return ">" })
 
-		return fmt.Sprintf("%v:%v", h, m)
-	})
+	right_fn := func() string {
+		return "\x1b[32m" + time.Now().Format("03:04:05") + "\x1b[0m"
+	}
+
+	a.shell.Prompt.Right(right_fn)
+
+	transient := func() string { return "\x1b[32m" + ">> " + "\x1b[0m" }
+	a.shell.Prompt.Transient(transient)
 
 	runner, err := interp.New(interp.StdIO(os.Stdin, os.Stdout, os.Stderr), interp.Interactive(true))
 	if err != nil {
@@ -172,14 +180,14 @@ func (a *ash) Run() error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, os.Kill)
 
-	ctx, _ := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		select {
 		case <-signals:
-			// cancel()
+			cancel()
 			return
-		case <-ctx.Done():
-			return
+			// case <-ctx.Done():
+			// 	return
 		}
 	}()
 
@@ -200,13 +208,28 @@ func (a *ash) Run() error {
 			shouldExit bool
 		)
 
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			select {
+			case <-signals:
+				cancel()
+				return
+			case <-ctx.Done():
+				return
+			}
+		}()
+
 		if err := a.parser.Stmts(strings.NewReader(line), func(stmt *syntax.Stmt) bool {
 			exitErr = a.runner.Run(ctx, stmt)
 			if a.runner.Exited() {
-				shouldExit = true
+				if e, ok := interp.IsExitStatus(exitErr); ok {
+					os.Exit(int(e))
+				} else {
+					return false
+				}
 			}
 
-			return false
+			return true
 		}); err != nil {
 			log.Println(err)
 		}
@@ -215,8 +238,6 @@ func (a *ash) Run() error {
 			os.Exit(int(e))
 		}
 	}
-
-	return nil
 }
 
 func main() {
